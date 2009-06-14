@@ -1,0 +1,16 @@
+A small number of FX created by working at the sample level in SuperCollider.
+
+-Looping/stuttter
+-Delay line
+-Tremolo
+-Pitch shift Up and down (no interpolation yet)
+-Basic machine listening to pick significant points at which to apply FX.
+
+Installation:
+-Copy the lowGradeSounds folder to your sounds directory
+
+Use:
+-Boot the server
+-load the audio file (or one of your own)
+-Run the code in the first set of brackets
+-Follow the instructions near the bottom of the rtf.

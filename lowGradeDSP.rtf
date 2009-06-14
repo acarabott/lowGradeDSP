@@ -1,0 +1,430 @@
+{\rtf1\ansi\ansicpg1252\cocoartf949\cocoasubrtf430
+{\fonttbl\f0\fnil\fcharset0 Monaco;\f1\fnil\fcharset0 LucidaGrande;}
+{\colortbl;\red255\green255\blue255;\red191\green0\blue0;\red0\green0\blue191;\red96\green96\blue96;
+}
+\deftab560
+\pard\pardeftab560\ql\qnatural
+
+\f0\fs64 \cf2 //Adjust the ~file.openWrite directory to suit
+\fs24 \cf0 \
+\
+\
+\cf2 //Boot server and Load audio file into buffer \cf0 \
+s.boot;\
+~buf = \cf3 Buffer\cf0 .read(s, \cf4 "sounds/
+\f1 lowGradeSounds/pearTree
+\f0 .wav"\cf0 );\
+\
+(\
+\
+\cf2 //////////////////////////////////////////////////////////////// Admin ///////////////////////////////////////////////////////////////////\cf0 \
+\cf2 //Store number of frames in buffer\cf0 \
+~numF = ~buf.numFrames;\
+\
+\cf2 //Convert buffer to Signal\cf0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab560\ql\qnatural\pardirnatural
+\cf0 ~buf.loadToFloatArray(0, (~numF), \{ \cf3 |floatdata|\cf0  \
+                ~sig=\cf3 Signal\cf0 .newFrom(floatdata);\
+            \}\
+);\
+\pard\pardeftab560\ql\qnatural
+\cf0 \
+\cf2 //Function for writing the output audiofile\cf0 \
+~writeFunc= \{\cf3 |src|\cf0 \
+	\
+	~file = \cf3 SoundFile\cf0 .new.headerFormat_(\cf4 "WAV"\cf0 ).sampleFormat_(\cf4 "int16"\cf0 ).numChannels_(~buf.numChannels);\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab560\ql\qnatural\pardirnatural
+\cf0 	\
+	
+\fs44 ~file.openWrite(\cf4 "/Users/arthurc/Desktop/todayTest.wav"\cf0 ); \cf2 //Adjust
+\fs24 \cf0 \
+	\
+	~file.writeData(src);\
+	~file.close;\
+\};\
+\pard\pardeftab560\ql\qnatural
+\cf0 	\
+\cf2 //Function to concatonate signals\cf0 \
+	\cf2 //iSig = PreFX\cf0 \
+	\cf2 //fxSig = FX\cf0 \
+	\cf2 //oSig = AfterFX\cf0 \
+	\
+~conSigs= \{\
+	\cf3 Signal\cf0 .newFrom(~iSig++~fxSig++~oSig);\
+\};\
+\
+\cf2 //Function to set the frames for the various sections\cf0 \
+~setValuesFunc=\
+\{\cf3 |src, start, length|\cf0 \
+	\
+	\cf2 //Start/end values + signal for pre effect\cf0 \
+	\
+	~iSig = \cf3 Signal\cf0 .newClear(start);\
+	\
+	~fxStart = start;\
+	~fxEnd = ~fxStart + (length-1);\
+	\
+	~oStart = ~fxEnd+1;\
+	~oEnd = src.size-1;\
+	~oSig = \cf3 Signal\cf0 .newClear(~oEnd-~oStart+1);\
+	\cf2 //Copy intro to new signal\cf0 \
+	~iSig.size.do(\{\cf3 |i|\cf0 \
+		~iSig[i] = src[i];\
+	\});\
+	\
+	\cf2 //Copy post shift to new signal\cf0 \
+	for(~oStart, ~oEnd,\{\cf3 |i,j|\cf0 \
+		~oSig[j] = src[i];\
+	\});\
+	\
+	\
+\};\
+\
+\cf2 //Function to create fourth power fade envelope\cf0 \
+~nuFadeEnv = \{\cf3 |frames|\cf0 \
+	\cf3 var\cf0  fourthEnv;\
+	fourthEnv = \cf3 Env\cf0 .new([0,1], [1]);\
+	fourthEnv = fourthEnv.asSignal(frames);\
+	fourthEnv.size.do(\{\cf3 |i|\cf0 \
+		\cf3 var\cf0  val;\
+		val = fourthEnv[i];\
+		fourthEnv[i] = val*val*val*val;	\
+	\});\
+	fourthEnv;\
+\};\
+\
+\cf2 //Function to fade out the end of the pre fx section\cf0 \
+~iSigFadeOut = \{\
+	\cf2 // 10% of total samples of intro\cf0 \
+	~tenPercent = ~iSig.size/10;\
+	\cf2 //Checks which is larger, 10% or 100 samples\cf0 \
+	if(~tenPercent<100,\
+		\{~fadeSize = ~tenPercent\},\
+		\{~fadeSize = 100\}\
+	);\
+	\
+	\cf2 //Creates a new fourth power envelope for fade outs on the 'intro' section\cf0 \
+	~iSigEnv = ~nuFadeEnv.(~fadeSize);\
+	\
+	\cf2 //Creates fade\cf0 \
+	~iSigEnv.size.do(\{\cf3 |i|\cf0 \
+		~iSig[(~iSig.size-1) - (~iSigEnv.size-1) +i] = ~iSig[(~iSig.size-1) - (~iSigEnv.size-1) +i] * ~iSigEnv[~iSigEnv.size-1-i];		\
+	\});\
+	\
+\};\
+\
+\cf2 //Simple Machine Listening\cf0 \
+\cf2 //Function to find 1024 frame windows of the signal where the mean square of the window is greater\cf0 \
+\cf2 //than the mean square of the whole signal\cf0 \
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab560\ql\qnatural\pardirnatural
+\cf0 ~getPoints = \{\cf3 |sig, mult=10|\cf0 \
+	\cf2 //List of windows to return\cf0 \
+	~points = \cf3 List\cf0 [];\
+	\
+	\cf2 //Sub-function for finding the mean square of a given signal\cf0 \
+	~getMS = \{\cf3 |sub|\cf0  \cf3 var\cf0  ret;\
+		ret=0.0;\
+\
+		sub.do\{\cf3 |val|\cf0  ret=ret+val.squared\};\
+		\
+		ret = ret/sub.size;\
+	\};\
+	\
+	\cf2 //Get mean square of entire signal\cf0 \
+	~sigMS = ~getMS.(sig);\
+	\
+	\cf2 //Find windows with mean square > mean square of signal\cf0 \
+\pard\pardeftab560\ql\qnatural
+\cf0 	forBy(0, (sig.size-1024), 1024,\
+		\{\cf3 |i|\cf0 \
+		\cf3 var\cf0  msnow= ~getMS.(~sig[i..i+1024]);\
+		\
+			if(msnow > (mult*~sigMS),\
+				\{\
+					~points.add(i);\
+				\}\
+			);\
+		\}\
+	);\
+	\cf2 //Return the list of above average ms windows\cf0 \
+	~points;\
+\};\
+\
+\cf2 ////////////////////////////////////////////////////////////////// FX Functions ///////////////////////////////////////////////////////////\cf0 \
+\
+\cf2 //Looping Function\cf0 \
+	\cf2 //src  		Source signal\cf0 \
+	\cf2 //lPoint 	Point at which to loop\cf0 \
+	\cf2 //lFrames	Number of frames to loop\cf0 \
+	\cf2 //lTimes	Number of times to loop segment\cf0 \
+\
+~loopFunc = \{\cf3 |src, lPoint, lFrames, lTimes|\cf0 \
+\
+	\cf2 //Intro start and end frame\cf0 \
+	~iStart = 0;\
+	~iEnd = lPoint;\
+	\
+	\cf2 //Loop start frame, number of frames and end frame\cf0 \
+	~lStart = lPoint;\
+	~lLength = lFrames;\
+	~lEnd = ~lStart + ~lLength-1;\
+	\
+	\cf2 //Outro Start and End frames, and length of outro.\cf0 \
+	~oStart = ~lEnd+1;\
+	~oEnd = src.size-1;\
+	~oLength = src.size-~oStart;\
+	\
+	\cf2 //Start, number of frames and end of fx section in Output signal\cf0 \
+	~bStart = ~lStart;\
+	~bLength = ~lLength*lTimes;\
+	~bEnd = ~bStart + (~bLength -1);\
+	\
+	\cf2 //Outro start and end frame for Output signal\cf0 \
+	~fStart = ~bEnd+1;\
+	~fEnd = ~fStart+~oLength;\
+	\
+	\cf2 //Intro signal\cf0 \
+	~iSig = \cf3 Signal\cf0 .newClear(~iEnd);\
+	~iSig.size.do(\{\cf3 |i|\cf0 \
+		~iSig[i] = src[i];\
+	\});\
+	\
+	\cf2 //Loop Signal\cf0 \
+	~lSig = \cf3 Signal\cf0 .newClear(lFrames);\
+	\
+	for(~lStart, ~lEnd,\{\cf3 |i,j|\cf0 \
+		~lSig[j] = src[i];\
+	\});\
+	\
+\
+	\cf2 //Enveloping\cf0 \
+	\
+	\cf2 //PreFX Envelope\cf0 \
+	~iSigFadeOut.();\
+	\
+	\cf2 //Loop Envelope\cf0 \
+	~tenPercent = ~lSig.size/10;\
+	if(~tenPercent<100,\
+		\{~fadeSize = ~tenPercent\},\
+		\{~fadeSize = 100\}\
+	);\
+	\
+	\cf2 //Create envelope\cf0 \
+	~lSigEnv = ~nuFadeEnv.(~fadeSize);\
+	\cf2 //Creates fades	\cf0 \
+	~lSigEnv.size.do(\{\cf3 |i|\cf0 \
+			\cf2 //Loop Start\cf0 \
+		~lSig[i] = ~lSig[i] * ~lSigEnv[i]; \
+			\cf2 //Loop End\cf0 \
+		~lSig[(~lSig.size-1) - (~lSigEnv.size-1)+i] =	~lSig[(~lSig.size-1) - (~lSigEnv.size-1)+i] * ~lSigEnv[~lSigEnv.size-1-i]\
+	\});\
+				\
+	\cf2 //FX Signal\cf0 \
+	~fxSig = \cf3 Signal\cf0 .newClear(~bLength);\
+	\
+	~bLength.do(\{\cf3 |i|\cf0 \
+		~fxSig[i] = ~lSig.wrapAt(i);\
+	\});\
+\
+	\cf2 //Outro Signal\cf0 \
+	~oSig = \cf3 Signal\cf0 .newClear(~oLength);\
+	\
+	for(~oStart, ~oEnd,\{\cf3 |i,j|\cf0 \
+		~oSig[j] = src[i];\
+	\});\
+	\
+	\cf2 //Concatonate Intro, FX and Outro signals\cf0 \
+	~conSigs.();\
+\
+\
+\};\
+\
+\
+\cf2 //Delay line\cf0 \
+	\cf2 //src		Source signal\cf0 \
+	\cf2 //dStart	Sample at which to start delay\cf0 \
+	\cf2 //dTime		Delay time in samples\cf0 \
+~delayFunc = \{\cf3 |src, dStart, dTime|\cf0 \
+	\
+	\cf2 //Signal to be delayed/repeated\cf0 \
+	~fxSig = \cf3 Signal\cf0 .newFrom(src);\
+	\
+	\
+	\
+	\cf2 //Fade out envelope, fourth power\cf0 \
+	~env = \cf3 Env\cf0 .new([1,1,0],[1,1]).asSignal(~fxSig.size);\
+	~env.size.do(\{\cf3 |i|\cf0  ~env[i] = ~env[i]*~env[i]\});\
+	~fxSig.size.do(\{\cf3 |i|\cf0 \
+		~fxSig[i] = ~fxSig[i] * ~env[i];\
+	\});\
+	\
+	~fxSig.size.do(\{\cf3 |i|\cf0 \
+		~fxSig[i] = ~fxSig[i] + ~fxSig.wrapAt(i-dTime)/4;\
+	\});\
+	\
+	\cf2 //Output signal\cf0 \
+	~outSig = \cf3 Signal\cf0 .newFrom(src);\
+	\
+	\cf2 //Add delays\cf0 \
+	(~outSig.size-dTime).do(\{\cf3 |i|\cf0 \
+		~outSig[i+dTime] = ~outSig[i+dTime] + (~fxSig.wrapAt(i));\
+		~fxSig.wrapPut(i, ~fxSig.wrapAt(i)*0.5); \
+	\});\
+	\
+	\cf2 //Return processed signal\cf0 \
+	~outSig;\
+\};\
+\
+\
+\cf2 //Tremolo\cf0 \
+	\cf2 //src		Source Signal\cf0 \
+	\cf2 //tPoint	Sample to start Tremolo\cf0 \
+	\cf2 //tRate		rate in hz of Tremolo\cf0 \
+	\cf2 //tLenght	Number of samples to Tremolo for\cf0 \
+\
+~tremFunc=\
+\{\cf3 |src, tPoint, tRate, tLength|\cf0 \
+	\
+	\cf2 //Set intro/fx/outro points\cf0 \
+	~setValuesFunc.(src, tPoint, tLength);\
+	\cf2 //Sine Envelope for multiplication\cf0 \
+	~sinEnv=\cf3 Env\cf0 .sine(1,1).asSignal(44100/tRate);\
+	\cf2 //Signal for copying tremolo onto\cf0 \
+	~fxSig = \cf3 Signal\cf0 .newClear(tLength);\
+\
+	for(tPoint, (tPoint+tLength-1), \{\cf3 |i,j|\cf0 \
+		~fxSig[j] = ~sig[i]*~sinEnv.wrapAt(j);\
+	\});\
+	\
+	\cf2 //Envelope end of preFX section\cf0 \
+	~iSigFadeOut.();\
+\
+	\cf2 //Concatonate intro/fx/outro signals\cf0 \
+	~conSigs.();\
+\};\
+\
+\
+\cf2 //PitchDown\cf0 \
+	\cf2 //src 		Source Signal\cf0 \
+	\cf2 //pPoint 	Point at which to pitch shift\cf0 \
+	\cf2 //pLength	Number of frames to pitch shift for\cf0 \
+	\
+~pDownFunc=\
+\{\cf3 |src, pPoint, pLength|\cf0 \
+	\cf3 var\cf0  j;\
+	\cf3 var\cf0  srcSize = src.size;\
+	\
+	~setValuesFunc.(src, pPoint, pLength);\
+	\cf2 //Signal for pitch shift\cf0 \
+	\
+	~fxSig = \cf3 Signal\cf0 .newClear(pLength*2);\
+	\
+	\cf2 //Perform shifting (doubling of samples) into new Signal\cf0 \
+	j=0;\
+	for(~fxStart, ~fxEnd,\{\cf3 |i|\cf0 \
+		\cf3 var\cf0  srci = src[i];\
+		\
+		~fxSig[j] = srci;\
+		~fxSig[j+1] = srci;\
+		j=j+2;\
+	\});\
+	\
+	\cf2 //Concatonat signal	\cf0 \
+	~conSigs.();\
+\};\
+\
+\cf2 //PitchUp\cf0 \
+	\cf2 //src 		Source Signal\cf0 \
+	\cf2 //pPoint 	Point at which to pitch shift\cf0 \
+	\cf2 //pLength	Number of frames to pitch shift for\cf0 \
+~pUpFunc=\
+\{\cf3 |src, pPoint, pLength|\cf0 \
+	~srcSize=src.size;\
+	\
+	~setValuesFunc.(src, pPoint, pLength);\
+	\
+	~fxSig = \cf3 Signal\cf0 .newClear(pLength/2);\
+	\
+	~j=0;\
+	forBy(~fxStart, ~fxEnd, 2,\{\cf3 |i,j|\cf0 \
+		\
+			~fxSig[j] = ~sig[i];		\
+		\}\
+	);\
+	\
+	~conSigs.();\
+\};\
+\
+)\
+\
+\cf2 //	Instructions\cf0 \
+\cf2 //\cf0 \
+\cf2 //	1. Run ~getPoints block of code\cf0 \
+\cf2 //	2. Run an effects algorithm\cf0 \
+\cf2 //	3. run ~writeFunc or another effects algorithm using the affected signal\cf0 \
+\cf2 //  4. If you run out of effects, use ~writeFunc\cf0 \
+\
+\cf2 //Run this to get significant points, and then select 5 distinct ones.\cf0 \
+\cf2 //Second value can be tweaked to get more or less points, value is optimised for this file.\cf0 \
+(\
+~getPoints.(~sig, 5);\
+~nuPoints=\cf3 List\cf0 [];\
+~nuPoints.add(~points[0]);\
+5.do(\{\
+	~nuPoints.add(\
+		~points.reject(\{|item| \
+			~nuPoints.any(\{|i| \
+				((item<(i+22050))&&(item>(i-22050))) \})\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab560\ql\qnatural\pardirnatural
+\cf0 	\})[0])\
+\pard\pardeftab560\ql\qnatural
+\cf0 \});\
+);\
+\
+\cf2 //Looping Function\cf0 \
+	\cf2 //src  		Source signal\cf0 \
+	\cf2 //lPoint 	Point at which to loop\cf0 \
+	\cf2 //lFrames	Number of frames to loop\cf0 \
+	\cf2 //lTimes	Number of times to loop segment	\cf0 \
+	\
+~looped= ~loopFunc.(~sig, ~nuPoints[0], 5000, 5);\
+\cf2 //Adjust points to match new file length\cf0 \
+~nuPoints= ~nuPoints+(~looped.size-~sig.size);\
+\
+\cf2 //Output file\cf0 \
+~writeFunc.(~looped);\
+\
+\cf2 //Delay line (give it a little time)\cf0 \
+	\cf2 //src		Source signal\cf0 \
+	\cf2 //dStart	Sample at which to start delay\cf0 \
+	\cf2 //dTime		Delay time in samples\cf0 \
+\
+~delayed = ~delayFunc.(~looped, ~nuPoints[1], 10000);\
+~writeFunc.(~delayed);\
+\
+\cf2 //Tremolo\cf0 \
+	\cf2 //src		Source Signal\cf0 \
+	\cf2 //tPoint	Sample to start Tremolo\cf0 \
+	\cf2 //tRate		rate in hz of Tremolo\cf0 \
+	\cf2 //tLenght	Number of samples to Tremolo for\cf0 \
+\
+~tremoloed = ~tremFunc.(~delayed, ~nuPoints[2], 5, 88200);\
+~writeFunc.(~tremoloed);\
+\
+\cf2 //PitchDown\cf0 \
+	\cf2 //src 		Source Signal\cf0 \
+	\cf2 //pPoint 	Point at which to pitch shift\cf0 \
+	\cf2 //pLength	Number of frames to pitch shift for\cf0 \
+~pitchedDown = ~pDownFunc.(~tremoloed, ~nuPoints[3], 88200);\
+~writeFunc.(~pitchedDown);\
+\
+\cf2 //PitchUp\cf0 \
+	\cf2 //src 		Source Signal\cf0 \
+	\cf2 //pPoint 	Point at which to pitch shift\cf0 \
+	\cf2 //pLength	Number of frames to pitch shift \cf0 \
+~pitchedUp = ~pUpFunc.(~pitchedDown, ~nuPoints[4], 88200);\
+~writeFunc.(~pitchedUp);\
+\
+\
+}
